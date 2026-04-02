@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>API 自动化测试管理平台</title>
+    <link href="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.bootcdn.net/ajax/libs/vue/3.3.4/vue.global.prod.js"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/axios/1.4.0/axios.min.js"></script>
+    <style>
+        .sidebar { height: 90vh; border-right: 1px solid #dee2e6; overflow-y: auto; }
+        .case-item:hover { background-color: #f1f3f5; cursor: pointer; }
+        .active-case { background-color: #e7f1ff; border-left: 4px solid #0d6efd; }
+        pre { background: #2d2d2d; color: #ccc; padding: 15px; border-radius: 5px; max-height: 300px; overflow: auto; }
+        .status-pass { color: #198754; font-weight: bold; }
+        .status-fail { color: #dc3545; font-weight: bold; }
+        .badge-http { background-color: #6c757d; }
+        .badge-biz { background-color: #0d6efd; }
+    </style>
+</head>
+<body class="bg-light">
+
+<div id="app" class="container-fluid">
+    <nav class="navbar navbar-dark bg-dark mb-4 shadow">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">🛠 API Test Platform v2.0</span>
+            <span class="text-light small">后端状态: <span class="badge bg-success">已连接</span></span>
+        </div>
+    </nav>
+
+    <div class="row px-3">
+        <div class="col-md-3 sidebar bg-white rounded shadow-sm p-3">
+            <h6 class="text-muted mb-3">接口列表</h6>
+            <div v-for="api in apiList" :key="api.id" class="mb-3">
+                <div class="fw-bold p-2 bg-light rounded text-primary">
+                    📁 {{ api.name }}
+                </div>
+                <div v-for="c in caseMap[api.id]" :key="c.id"
+                     @click="selectCase(c, api)"
+                     :class="['p-2', 'ps-4', 'case-item', 'small', currentCase && currentCase.id === c.id ? 'active-case' : '']">
+                    📄 {{ c.caseName }}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-9 ps-4">
+            <div v-if="currentCase">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h4>{{ currentCase.caseName }}</h4>
+                    <button class="btn btn-primary px-4" @click="runTest" :disabled="loading">
+                        <span v-if="loading" class="spinner-border spinner-border-sm me-2"></span>
+                        {{ loading ? '运行中...' : '立即运行' }}
+                    </button>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card shadow-sm mb-3">
+                            <div class="card-header bg-white fw-bold">请求配置</div>
+                            <div class="card-body">
+                                <p class="mb-1 small text-muted">目标 URL:</p>
+                                <code class="d-block mb-3 p-2 bg-light border rounded text-break">{{ currentApi.url }}</code>
+                                <p class="mb-1 small text-muted">请求参数 (JSON):</p>
+                                <pre class="p-2 mb-0" style="background:#f8f9fa; color:#333; border: 1px solid #ddd;">{{ currentCase.requestParams }}</pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <div v-if="result" class="card shadow-sm border-0">
+                            <div :class="['card-header', 'text-white', result.success ? 'bg-success' : 'bg-danger']">
+                                最新结果: {{ result.success ? 'PASS' : 'FAIL' }}
+                                <span class="float-end">{{ result.cost }}ms</span>
+                            </div>
+                            <div class="card-body bg-white border">
+                                <div class="mb-3">
+                                    <span class="small me-3">
+                                        HTTP状态: <span :class="['badge', getHttpClass(result.httpStatus)]">{{ result.httpStatus }}</span>
+                                    </span>
+                                    <span class="small">
+                                        业务码: <span :class="['badge', getBizClass(result.businessCode)]">{{ result.businessCode }}</span>
+                                    </span>
+                                </div>
+                                <div v-if="result.error" class="text-danger fw-bold small mb-2">❌ {{ result.error }}</div>
+                                <p class="mb-1 small text-muted">响应正文:</p>
+                                <pre class="small mb-0">{{ result.responseBody }}</pre>
+                            </div>
+                        </div>
+                        <div v-else class="alert alert-secondary text-center py-5">等待运行...</div>
+                    </div>
+                </div>
+
+                <div class="card mt-4 shadow-sm border-0">
+                    <div class="card-header bg-white fw-bold d-flex justify-content-between">
+                        最近 5 次执行历史
+                        <button class="btn btn-sm btn-outline-secondary" @click="loadHistory(currentCase.id)">刷新历史</button>
+                    </div>
+                    <div class="card-body p-0">
+                        <table class="table table-sm table-hover mb-0">
+                            <thead class="table-light">
+                            <tr>
+                                <th>结果</th>
+                                <th>HTTP状态</th>
+                                <th>业务码</th>
+                                <th>耗时</th>
+                                <th>运行时间</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            <tr v-for="log in history" :key="log.id">
+                                <td>
+                                    <span :class="log.success ? 'status-pass' : 'status-fail'">
+                                        {{ log.success ? '● 成功' : '● 失败' }}
+                                    </span>
+                                </td>
+                                <td><span :class="['badge', getHttpClass(log.httpStatus)]">{{ log.httpStatus }}</span></td>
+                                <td><span :class="['badge', getBizClass(log.businessCode)]">{{ log.businessCode }}</span></td>
+                                <td>{{ log.cost }}ms</td>
+                                <td class="text-muted small">{{ log.runTime }}</td>
+                            </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div v-else class="text-center mt-5 pt-5 text-muted">
+                <h4>请从左侧选择一个测试用例</h4>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const { createApp, ref, onMounted, reactive } = Vue;
+
+    createApp({
+        setup() {
+            const apiList = ref([]);
+            const caseMap = reactive({});
+            const currentApi = ref(null);
+            const currentCase = ref(null);
+            const result = ref(null);
+            const history = ref([]);
+            const loading = ref(false);
+
+            const initData = async () => {
+                try {
+                    const res = await axios.get('/api/list');
+                    apiList.value = res.data;
+                    for (const api of apiList.value) {
+                        const cRes = await axios.get(`/api/case/list?apiId=${api.id}`);
+                        caseMap[api.id] = cRes.data;
+                    }
+                } catch (e) { console.error("初始化失败", e); }
+            };
+
+            const selectCase = (testCase, api) => {
+                currentCase.value = testCase;
+                currentApi.value = api;
+                result.value = null;
+                loadHistory(testCase.id);
+            };
+
+            const loadHistory = async (caseId) => {
+                try {
+                    const res = await axios.get(`/api/log/recent?caseId=${caseId}`);
+                    history.value = res.data;
+                } catch (e) { console.error("加载历史失败", e); }
+            };
+
+            const runTest = async () => {
+                if (!currentCase.value) return;
+                loading.value = true;
+                try {
+                    const res = await axios.get(`/api/case/run?caseId=${currentCase.value.id}`);
+                    result.value = res.data;
+                    await loadHistory(currentCase.value.id);
+                } catch (e) { alert("接口调用失败"); }
+                finally { loading.value = false; }
+            };
+
+            // 根据状态码返回不同的颜色类
+            const getHttpClass = (code) => {
+                if (code === 200) return 'bg-success';
+                if (code === -1) return 'bg-secondary';
+                return 'bg-danger';
+            };
+
+            const getBizClass = (code) => {
+                if (code === 200) return 'bg-success';
+                if (code === 400) return 'bg-warning text-dark';
+                return 'bg-danger';
+            };
+
+            onMounted(initData);
+
+            return {
+                apiList, caseMap, currentApi, currentCase, result, history,
+                loading, selectCase, runTest, loadHistory, getHttpClass, getBizClass
+            };
+        }
+    }).mount('#app');
+</script>
+</body>
+</html>

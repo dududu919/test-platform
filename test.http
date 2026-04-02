@@ -1,0 +1,12 @@
+### 为 ID 为 1 的接口（天气接口）添加一个用例
+POST http://localhost:8080/api/case/add
+Content-Type: application/json
+
+{
+  "apiId": 1,
+  "caseName": "断言测试",
+  "requestParams": "{\"city\": \"Beijing\" }"
+}
+
+### 查看这个接口下的所有用例
+GET http://localhost:8080/api/case/run?caseId=2
